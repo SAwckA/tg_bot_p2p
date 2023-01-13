@@ -1,13 +1,18 @@
 package main
 
 import (
+	"github.com/joho/godotenv"
+	"os"
 	"tg-bot-p2p/pkg/api"
 	"tg-bot-p2p/pkg/bot"
 	"tg-bot-p2p/pkg/repository"
 )
 
 func main() {
-	token := "1224606820:AAFiYvv8-eiMdwD7M_ypDbfTFjI3QyQW6pI"
+
+	_ = godotenv.Load()
+
+	token := os.Getenv("BOT_TOKEN")
 
 	tg := api.NewTelegramAPI(token)
 
