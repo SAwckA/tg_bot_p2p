@@ -10,7 +10,7 @@ import (
 type Bot struct {
 	sessionStorage *repository.UserSessionStorage
 	tg             *api.TelegramAPI
-	day            *repository.Day
+	dayStorage     *repository.DayStorage
 }
 
 type ChatCtx struct {
@@ -22,8 +22,8 @@ func NewChatCtx(upd api.Update) *ChatCtx {
 	return &ChatCtx{Update: &upd}
 }
 
-func NewBot(storage *repository.UserSessionStorage, tg *api.TelegramAPI) *Bot {
-	return &Bot{sessionStorage: storage, tg: tg}
+func NewBot(storage *repository.UserSessionStorage, tg *api.TelegramAPI, dayStorage *repository.DayStorage) *Bot {
+	return &Bot{sessionStorage: storage, tg: tg, dayStorage: dayStorage}
 }
 
 func (b *Bot) setSessionID(chatID int) *repository.UserSession {
@@ -37,6 +37,12 @@ func (b *Bot) setSessionID(chatID int) *repository.UserSession {
 }
 
 func (b *Bot) StartHandling(c chan api.Update) {
+	// defer func() {
+	// 	if r := recover(); r != nil {
+	// 		fmt.Println("HANDLING RECOVER:", r)
+	// 	}
+	// }()
+
 	for upd := range c {
 
 		ctx := NewChatCtx(upd)
@@ -47,16 +53,17 @@ func (b *Bot) StartHandling(c chan api.Update) {
 			continue
 		}
 
-		if upd.Message.IsCommand() {
-			ctx.session = b.sessionStorage.GetUserSession(upd.Message.Chat.ID)
-			go b.handleCommand(ctx)
-			continue
-		}
-
 		if upd.Message != nil {
+			if upd.Message.IsCommand() {
+				ctx.session = b.sessionStorage.GetUserSession(upd.Message.Chat.ID)
+				go b.handleCommand(ctx)
+				continue
+			}
+
 			ctx.session = b.sessionStorage.GetUserSession(upd.Message.Chat.ID)
 			go b.handleMessage(ctx)
 			continue
+
 		}
 	}
 }
@@ -65,6 +72,10 @@ func (b *Bot) handleCommand(ctx *ChatCtx) {
 	fmt.Println("Command:", ctx.Message.Command())
 	switch ctx.Message.Command() {
 	case "start":
+		if day := b.dayStorage.GetDay(); day != nil {
+			b.tg.SendMessage(ctx.Chat.ID, createDayMessage(day.Date, len(day.Circles), day.DayPlus), api.DayKeyboard())
+			return
+		}
 		t := time.Now()
 		msg := createMainMessage(fmt.Sprintf("%s", t.Format("02-01-2006")))
 		b.tg.SendMessage(ctx.Chat.ID, msg, api.MenuKeyboard())
@@ -76,7 +87,15 @@ func (b *Bot) handleCommand(ctx *ChatCtx) {
 
 func (b *Bot) handleMessage(ctx *ChatCtx) {
 
-	if b.day == nil {
+	day := b.dayStorage.GetDay()
+
+	if day == nil {
+		b.tg.DeleteMessage(ctx.Chat.ID, ctx.MessageID)
+		msg := b.tg.SendMessage(ctx.Chat.ID, "День уже закрыт", api.NullKeyboard())
+		go func() {
+			time.Sleep(time.Second * 2)
+			b.tg.DeleteMessage(ctx.Chat.ID, msg.MessageID)
+		}()
 		return
 	}
 
@@ -85,56 +104,61 @@ func (b *Bot) handleMessage(ctx *ChatCtx) {
 	//Заполнение круга
 	case "enter pair name":
 		ctx.session.SetState("circle menu")
+		b.sessionStorage.SaveUserSession(ctx.session)
 		ctx.session.Circle.Name = ctx.Message.Text
 
 		c, _ := ctx.session.Circle.CalculateCircle()
 		b.tg.EditMessage(
 			ctx.Message.Chat.ID,
 			ctx.session.DialogID,
-			createPairForm(c, b.day.Date),
+			createPairForm(c, day.Date),
 			api.CircleKeyboard(ctx.session.Circle))
 
 	case "enter enter sum":
 		ctx.session.SetState("circle menu")
+		b.sessionStorage.SaveUserSession(ctx.session)
 		ctx.session.Circle.Enter = ctx.Message.Text
 
 		c, _ := ctx.session.Circle.CalculateCircle()
 		b.tg.EditMessage(
 			ctx.Message.Chat.ID,
 			ctx.session.DialogID,
-			createPairForm(c, b.day.Date),
+			createPairForm(c, day.Date),
 			api.CircleKeyboard(ctx.session.Circle))
 
 	case "enter tether sum":
 		ctx.session.SetState("circle menu")
+		b.sessionStorage.SaveUserSession(ctx.session)
 		ctx.session.Circle.TetherSum = ctx.Message.Text
 		c, _ := ctx.session.Circle.CalculateCircle()
 		b.tg.EditMessage(
 			ctx.Message.Chat.ID,
 			ctx.session.DialogID,
-			createPairForm(c, b.day.Date),
+			createPairForm(c, day.Date),
 			api.CircleKeyboard(ctx.session.Circle))
 
 	case "enter exit sum":
 		ctx.session.SetState("circle menu")
+		b.sessionStorage.SaveUserSession(ctx.session)
 		ctx.session.Circle.Exit = ctx.Message.Text
 
 		c, _ := ctx.session.Circle.CalculateCircle()
 		b.tg.EditMessage(
 			ctx.Message.Chat.ID,
 			ctx.session.DialogID,
-			createPairForm(c, b.day.Date),
+			createPairForm(c, day.Date),
 			api.CircleKeyboard(ctx.session.Circle))
 
 	case "enter balance":
 		ctx.session.SetState("circle menu")
+		b.sessionStorage.SaveUserSession(ctx.session)
 		ctx.session.Circle.Balance = ctx.Message.Text
 
 		c, _ := ctx.session.Circle.CalculateCircle()
 		b.tg.EditMessage(
 			ctx.Message.Chat.ID,
 			ctx.session.DialogID,
-			createPairForm(c, b.day.Date),
+			createPairForm(c, day.Date),
 			api.CircleKeyboard(ctx.session.Circle))
 
 	//Конец заполнения
@@ -143,7 +167,11 @@ func (b *Bot) handleMessage(ctx *ChatCtx) {
 		return
 	}
 
+	if day != nil {
+		b.dayStorage.SaveDay(day)
+	}
 	b.tg.DeleteMessage(ctx.Chat.ID, ctx.MessageID)
+	b.sessionStorage.SaveUserSession(ctx.session)
 }
 
 func (b *Bot) handleCallback(ctx *ChatCtx) {
@@ -152,47 +180,69 @@ func (b *Bot) handleCallback(ctx *ChatCtx) {
 
 	switch ctx.CallbackQuery.Data {
 
-	case "day menu":
-		editedMessage = b.tg.EditMessage(ctx.CallbackQuery.Chat.ID, ctx.CallbackQuery.MessageID, createDayMessage(b.day.Date, len(b.day.Circles), b.day.DayPlus), api.DayKeyboard())
-
 	case "new day":
+		day := b.dayStorage.GetDay()
 		ctx.session.SetState("day menu")
-		if b.day != nil {
+		b.sessionStorage.SaveUserSession(ctx.session)
+		if day != nil {
 			fmt.Println("DAY ALREADY OPEN")
-			b.tg.EditMessage(ctx.CallbackQuery.Chat.ID, ctx.CallbackQuery.MessageID, createDayMessage(b.day.Date, len(b.day.Circles), b.day.DayPlus), api.DayKeyboard())
+			b.tg.EditMessage(ctx.CallbackQuery.Chat.ID, ctx.CallbackQuery.MessageID, createDayMessage(day.Date, len(day.Circles), day.DayPlus), api.DayKeyboard())
 			return
 		}
+
 		fmt.Println("CREATE NEW DAY")
-		b.day = repository.NewDay()
-		msg := fmt.Sprintf("День %s открыт", b.day.Date)
+		day = b.dayStorage.CreateDay()
+		msg := fmt.Sprintf("День %s открыт", day.Date)
 		b.tg.SendToChannel(msg, api.NullKeyboard())
-		editedMessage = b.tg.EditMessage(ctx.CallbackQuery.Chat.ID, ctx.CallbackQuery.MessageID, createDayMessage(b.day.Date, len(b.day.Circles), b.day.DayPlus), api.DayKeyboard())
+		editedMessage = b.tg.EditMessage(ctx.CallbackQuery.Chat.ID, ctx.CallbackQuery.MessageID, createDayMessage(day.Date, len(day.Circles), day.DayPlus), api.DayKeyboard())
+		return
+	}
+
+	day := b.dayStorage.GetDay()
+
+	if day == nil {
+		t := time.Now()
+		msg := createMainMessage(t.Format("02-01-2006"))
+		b.tg.SendMessage(ctx.CallbackQuery.Chat.ID, msg, api.MenuKeyboard())
+		return
+	}
+
+	switch ctx.CallbackQuery.Data {
+
+	case "day menu":
+		editedMessage = b.tg.EditMessage(ctx.CallbackQuery.Chat.ID, ctx.CallbackQuery.MessageID, createDayMessage(day.Date, len(day.Circles), day.DayPlus), api.DayKeyboard())
 
 	//КРУГ
 	case "circle menu":
 		ctx.session.SetState("circle menu")
+		b.sessionStorage.SaveUserSession(ctx.session)
 		c, _ := ctx.session.Circle.CalculateCircle()
 		editedMessage = b.tg.EditMessage(ctx.CallbackQuery.Chat.ID, ctx.CallbackQuery.MessageID,
-			createPairForm(c, b.day.Date), api.CircleKeyboard(ctx.session.Circle))
+			createPairForm(c, day.Date), api.CircleKeyboard(ctx.session.Circle))
 	//Заполнение круга
 	case "pair name":
 		ctx.session.SetState("enter pair name")
+		b.sessionStorage.SaveUserSession(ctx.session)
 		editedMessage = b.EditByCtx(ctx, "Введите название связки", api.CancelKeyboard("circle menu"))
 
 	case "enter sum":
 		ctx.session.SetState("enter enter sum")
+		b.sessionStorage.SaveUserSession(ctx.session)
 		editedMessage = b.EditByCtx(ctx, "Введите сумму входа", api.CancelKeyboard("circle menu"))
 
 	case "tether sum":
 		ctx.session.SetState("enter tether sum")
+		b.sessionStorage.SaveUserSession(ctx.session)
 		editedMessage = b.EditByCtx(ctx, "Введите сумму полученного тезера", api.CancelKeyboard("circle menu"))
 
 	case "exit sum":
 		ctx.session.SetState("enter exit sum")
+		b.sessionStorage.SaveUserSession(ctx.session)
 		editedMessage = b.EditByCtx(ctx, "Введите сумму выхода", api.CancelKeyboard("circle menu"))
 
 	case "balance":
 		ctx.session.SetState("enter balance")
+		b.sessionStorage.SaveUserSession(ctx.session)
 		editedMessage = b.EditByCtx(ctx, "Введите остаток", api.CancelKeyboard("circle menu"))
 
 	case "balance currency":
@@ -205,32 +255,33 @@ func (b *Bot) handleCallback(ctx *ChatCtx) {
 		}
 		c, _ := ctx.session.Circle.CalculateCircle()
 		fmt.Println("CHANGE CURRENCY:", ctx.session.Circle.CurrencyType)
-		editedMessage = b.tg.EditMessage(ctx.CallbackQuery.Chat.ID, ctx.CallbackQuery.MessageID, createPairForm(c, b.day.Date),
+		editedMessage = b.tg.EditMessage(ctx.CallbackQuery.Chat.ID, ctx.CallbackQuery.MessageID, createPairForm(c, day.Date),
 			api.CircleKeyboard(ctx.session.Circle))
 
 	case "close circle":
 		ctx.session.SetState("circle menu")
+		b.sessionStorage.SaveUserSession(ctx.session)
 
 		c, err := ctx.session.Circle.CalculateCircle()
 		if err != nil {
 			editedMessage = b.EditByCtx(ctx, "Форма не заполнена или заполнена неправильно", api.CancelKeyboard("circle menu"))
 			return
 		}
-		b.day.AddCircle(c)
-		go b.tg.SendToChannel(fmt.Sprintf("Круг от %s\n%s", ctx.CallbackQuery.From.FirstName, createPairForm(c, b.day.Date)), api.NullKeyboard())
-		editedMessage = b.EditByCtx(ctx, createDayMessage(b.day.Date, len(b.day.Circles), b.day.DayPlus), api.DayKeyboard())
+		day.AddCircle(c)
+		go b.tg.SendToChannel(fmt.Sprintf("Круг от %s\n%s", ctx.CallbackQuery.From.FirstName, createPairForm(c, day.Date)), api.NullKeyboard())
+		editedMessage = b.EditByCtx(ctx, createDayMessage(day.Date, len(day.Circles), day.DayPlus), api.DayKeyboard())
 		ctx.session.Circle = repository.NewCircleForm()
 
 		///////////
 	case "close day":
 		t := time.Now()
-		if b.day == nil {
+		if day == nil {
 			msg := createMainMessage(fmt.Sprintf("%s", t.Format("02-01-2006")))
 			editedMessage = b.tg.EditMessage(ctx.CallbackQuery.Chat.ID, ctx.CallbackQuery.MessageID, msg, api.MenuKeyboard())
 			return
 		}
-		b.tg.SendToChannel(createDayCloseMessage(b.day), api.NullKeyboard())
-		b.day = nil
+		b.tg.SendToChannel(createDayCloseMessage(day), api.NullKeyboard())
+		b.dayStorage.CloseDay()
 		msg := createMainMessage(fmt.Sprintf("%s", t.Format("02-01-2006")))
 		editedMessage = b.tg.EditMessage(ctx.CallbackQuery.Chat.ID, ctx.CallbackQuery.MessageID, msg, api.MenuKeyboard())
 		/////////////
@@ -242,7 +293,7 @@ func (b *Bot) handleCallback(ctx *ChatCtx) {
 
 		dayPlus = 0.0
 
-		for _, c := range b.day.Circles {
+		for _, c := range day.Circles {
 			profit := c.Exit - c.Enter
 			dayPlus = dayPlus + profit
 		}
@@ -254,6 +305,10 @@ func (b *Bot) handleCallback(ctx *ChatCtx) {
 
 	ctx.session.DialogID = editedMessage.MessageID
 
+	if day != nil {
+		b.dayStorage.SaveDay(day)
+	}
+	b.sessionStorage.SaveUserSession(ctx.session)
 }
 
 func (b *Bot) EditByCtx(ctx *ChatCtx, msg string, keyboard api.Keyboard) *api.Message {

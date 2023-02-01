@@ -1,0 +1,22 @@
+version: '3.3'
+
+services:
+
+  # tg_bot_p2p:
+  #   image: ghcr.io/sawcka/tg_bot_p2p:latest
+  #   restart: always
+  #   environment:
+  #     - BOT_TOKEN=5683646366:AAGgqHG8BYpH5vSf_5o-asSkAD1eQ2U_91Y
+  #     - BOT_CHANNEL=-1001862318343
+  #     - MONGO_CONN=mongodb://bot:changeme@mongodb
+
+  mongodb:
+    image: mongo:5.0
+    ports:
+      - "27017:27017"
+    
+    volumes:
+      - ./mongodata:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=bot
+      - MONGO_INITDB_ROOT_PASSWORD=changeme

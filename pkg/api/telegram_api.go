@@ -37,14 +37,16 @@ func NewPoller(token string, timeout int) *Poller {
 }
 
 type TelegramAPI struct {
-	token  string
-	Poller *Poller
+	token     string
+	Poller    *Poller
+	channelID string
 }
 
-func NewTelegramAPI(token string) *TelegramAPI {
+func NewTelegramAPI(token string, channelID string) *TelegramAPI {
 	return &TelegramAPI{
-		token:  token,
-		Poller: NewPoller(token, 30),
+		token:     token,
+		Poller:    NewPoller(token, 30),
+		channelID: channelID,
 	}
 }
 

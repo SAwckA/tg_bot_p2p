@@ -12,7 +12,6 @@ const (
 	sendMessage   = "sendMessage"
 	editMessage   = "editMessageText"
 	deleteMessage = "deleteMessage"
-	ChannelID     = "@test_p2p_bot123"
 )
 
 type Button struct {
@@ -48,7 +47,7 @@ type editMessageReq struct {
 func (tg *TelegramAPI) SendToChannel(text string, keyboard Keyboard) *Message {
 
 	values := sendMessageReqStringID{
-		ChatID:      ChannelID,
+		ChatID:      tg.channelID,
 		Text:        text,
 		ReplyMarkup: InlineKeyboard{keyboard},
 	}

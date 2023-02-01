@@ -7,7 +7,7 @@ import (
 
 const (
 	mainMessage  = "Главное меню\n\nТекущий день: %s"
-	dayMessage   = "День %s\nКругов: %d\nДневной плюс: %.2f"
+	dayMessage   = "День %s\n\nКругов: %d"
 	pairFormRUB  = "Форма заполнения:\n\n%s\n\nВход по: %.2f\nВыход по: %.2f\nОстаток: %.2f\n\nПрофит: %.2f₽"
 	pairFormUSTD = "Форма заполнения:\n\n%s\n\nВход по: %.2f\nВыход по: %.2f\nОстаток: %.2f\n\nПрофит: %.2f₮"
 )
@@ -17,7 +17,7 @@ func createMainMessage(day string) string {
 }
 
 func createDayMessage(day string, circles int, dayPlus float64) string {
-	return fmt.Sprintf(dayMessage, day, circles, dayPlus)
+	return fmt.Sprintf(dayMessage, day, circles)
 }
 
 func createPairForm(c *repository.Circle, date string) string {
